@@ -1,0 +1,28 @@
+[settings]
+timeout = 120
+
+[relaychain]
+default_command = "polkadot"
+chain = "westend-local"
+default_args = ["-lparachain=debug"]
+#default_args = ["--chain", "rococo-local"]
+
+[[relaychain.nodes]]
+name = "alice"
+validator = true
+balance = 1000000000000
+
+[[relaychain.nodes]]
+name = "bob"
+validator = true
+balance = 1000000000000
+
+[[parachains]]
+id = 100
+balance = 1000000000000
+
+[parachains.collator]
+name = "collator01"
+image = "/Users/wassim/Packages/Zombienet/polkadot-parachain"
+command = "polkadot-parachain"
+args = ["-lparachain=debug"]
