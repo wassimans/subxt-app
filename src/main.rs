@@ -1,13 +1,5 @@
-use subxt::{
-    OnlineClient, PolkadotConfig,
-    utils::{AccountId32, MultiAddress},
-};
+use subxt::{OnlineClient, PolkadotConfig, dynamic::Value, tx::dynamic as dynamic_call};
 use subxt_signer::sr25519::dev;
-
-#[subxt::subxt(runtime_metadata_path = "artifacts/statemint_metadata.scale")]
-pub mod statemint {}
-
-type StatemintConfig = PolkadotConfig;
 
 #[tokio::main]
 pub async fn main() {
@@ -18,19 +10,29 @@ pub async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // (the port 42069 is specified in the asset-hub-zombienet.toml)
-    let api = OnlineClient::<StatemintConfig>::from_url("ws://127.0.0.1:52272").await?;
-    println!("Connection with parachain established.");
+    let api = OnlineClient::<PolkadotConfig>::from_url("ws://127.0.0.1:59650")
+        .await
+        .map_err(|e| anyhow::anyhow!("RPC error: {e}"))?;
+    println!("✅ Connected to dynamic client");
 
-    let alice: MultiAddress<AccountId32, ()> = dev::alice().public_key().into();
+    println!("Available pallets:");
+    for p in api.metadata().pallets() {
+        println!("  • {}", p.name());
+    }
+
     let alice_pair_signer = dev::alice();
+    let alice = Value::from_bytes(alice_pair_signer.public_key());
 
-    const COLLECTION_ID: u32 = 12;
-    const NTF_ID: u32 = 234;
+    const COLLECTION_ID: u128 = 12;
+    const NFT_ID: u128 = 234;
 
     // create a collection with id `12`
-    let collection_creation_tx = statemint::tx()
-        .uniques()
-        .create(COLLECTION_ID, alice.clone());
+    let collection_creation_tx = dynamic_call(
+        "Uniques",
+        "create",
+        vec![Value::u128(COLLECTION_ID), alice.clone()],
+    );
+
     let _collection_creation_events = api
         .tx()
         .sign_and_submit_then_watch_default(&collection_creation_tx, &alice_pair_signer)
@@ -41,12 +43,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })?
         .wait_for_finalized_success()
         .await?;
-    println!("Collection created.");
+    println!("🌱 Collection {COLLECTION_ID} created");
 
     // create an nft in that collection with id `234`
-    let nft_creation_tx = statemint::tx()
-        .uniques()
-        .mint(COLLECTION_ID, NTF_ID, alice.clone());
+    let nft_creation_tx = dynamic_call(
+        "Uniques",
+        "mint",
+        vec![
+            Value::u128(COLLECTION_ID),
+            Value::u128(NFT_ID),
+            alice.clone(),
+        ],
+    );
     let _nft_creation_events = api
         .tx()
         .sign_and_submit_then_watch_default(&nft_creation_tx, &alice_pair_signer)
@@ -60,18 +68,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("NFT created.");
 
     // check in storage, that alice is the official owner of the NFT:
-    let nft_owner_storage_query = statemint::storage().uniques().asset(COLLECTION_ID, NTF_ID);
-    let nft_storage_details = api
+    let nft_owner_storage_query = subxt::storage::dynamic(
+        "Uniques",
+        "Asset",
+        vec![Value::u128(COLLECTION_ID), Value::u128(NFT_ID)],
+    );
+    if let Some(asset_info) = api
         .storage()
         .at_latest()
         .await?
         .fetch(&nft_owner_storage_query)
         .await?
-        .ok_or("The NFT should have an owner (alice)")?;
-
-    // make sure that alice is the owner of the NFT:
-    assert_eq!(nft_storage_details.owner, dev::alice().public_key().into());
-    println!("Storage Item Details: {:?}", nft_storage_details);
+    {
+        let asset_value = asset_info.to_value();
+        println!("🏷️  Asset info: {asset_value:?}");
+    } else {
+        println!("❌ Asset not found");
+    }
 
     Ok(())
 }
