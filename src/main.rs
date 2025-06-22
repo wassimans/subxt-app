@@ -1,4 +1,5 @@
-use subxt::{OnlineClient, PolkadotConfig, dynamic::Value, tx::dynamic as dynamic_call};
+use rand::{rng, RngCore};
+use subxt::{dynamic::Value, ext::scale_value::Composite, tx::dynamic as dynamic_call, OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::dev;
 
 #[tokio::main]
@@ -10,7 +11,7 @@ pub async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // (the port 42069 is specified in the asset-hub-zombienet.toml)
-    let api = OnlineClient::<PolkadotConfig>::from_url("ws://127.0.0.1:59650")
+    let api = OnlineClient::<PolkadotConfig>::from_url("ws://127.0.0.1:8000")
         .await
         .map_err(|e| anyhow::anyhow!("RPC error: {e}"))?;
     println!("✅ Connected to dynamic client");
@@ -21,16 +22,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let alice_pair_signer = dev::alice();
-    let alice = Value::from_bytes(alice_pair_signer.public_key());
+    let alice_bytes = alice_pair_signer.public_key().0.to_vec();
+    let alice = Value::variant(
+        // the enum variant name must match exactly what the metadata declares:
+        // for PolkadotConfig‘s MultiAddress it’s “Id”
+        "Id",
+        // its payload is the 32-byte AccountId
+        Composite::unnamed(vec![Value::from_bytes(alice_bytes)]),
+    );
 
-    const COLLECTION_ID: u128 = 12;
+    let mut rng = rng();
+    let collection_id: u128 = rng.next_u32() as u128;
     const NFT_ID: u128 = 234;
 
     // create a collection with id `12`
     let collection_creation_tx = dynamic_call(
         "Uniques",
         "create",
-        vec![Value::u128(COLLECTION_ID), alice.clone()],
+        vec![Value::u128(collection_id), alice.clone()],
     );
 
     let _collection_creation_events = api
@@ -43,17 +52,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })?
         .wait_for_finalized_success()
         .await?;
-    println!("🌱 Collection {COLLECTION_ID} created");
+    println!("🌱 Collection {collection_id} created");
 
     // create an nft in that collection with id `234`
     let nft_creation_tx = dynamic_call(
         "Uniques",
         "mint",
-        vec![
-            Value::u128(COLLECTION_ID),
-            Value::u128(NFT_ID),
-            alice.clone(),
-        ],
+        vec![Value::u128(collection_id), Value::u128(NFT_ID), alice.clone()],
     );
     let _nft_creation_events = api
         .tx()
@@ -71,7 +76,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let nft_owner_storage_query = subxt::storage::dynamic(
         "Uniques",
         "Asset",
-        vec![Value::u128(COLLECTION_ID), Value::u128(NFT_ID)],
+        vec![Value::u128(collection_id), Value::u128(NFT_ID)],
     );
     if let Some(asset_info) = api
         .storage()
